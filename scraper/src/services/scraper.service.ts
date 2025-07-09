@@ -26,7 +26,7 @@ export class ScraperService implements OnModuleInit, OnModuleDestroy {
     private readonly configService: ConfigService
   ) {
     this.concurrentScrapers = this.configService.get<number>('CONCURRENT_SCRAPERS', 3);
-    this.timeout = this.configService.get<number>('PUPPETEER_TIMEOUT', 60000);
+    this.timeout = this.configService.get<number>('PUPPETEER_TIMEOUT', 15000); // Reduced from 60s to 15s
     this.retryCount = this.configService.get<number>('MAX_RETRIES', 3);
   }
 
@@ -76,14 +76,61 @@ export class ScraperService implements OnModuleInit, OnModuleDestroy {
       }
 
       page = await this.browser.newPage();
-      await page.setUserAgent(userAgent);
       
+      // Performance optimizations
+      await page.setUserAgent(userAgent);
       await page.setViewport({ width: 1920, height: 1080 });
       
+      // Disable images and CSS for faster loading (optional)
+      const disableImages = this.configService.get<boolean>('DISABLE_IMAGES', true);
+      const disableCSS = this.configService.get<boolean>('DISABLE_CSS', false);
+      
+      if (disableImages || disableCSS) {
+        await page.setRequestInterception(true);
+        
+        page.on('request', (req) => {
+          const resourceType = req.resourceType();
+          
+          if (disableImages && ['image', 'stylesheet', 'font'].includes(resourceType)) {
+            req.abort();
+          } else if (disableCSS && resourceType === 'stylesheet') {
+            req.abort();
+          } else {
+            req.continue();
+          }
+        });
+      }
+      
+      // Try multiple wait strategies for better compatibility
+      const waitStrategy = this.configService.get<string>('WAIT_STRATEGY', 'fast');
+      let waitUntil: any;
+      
+      switch (waitStrategy) {
+        case 'comprehensive':
+          waitUntil = 'networkidle2'; // Slow but thorough
+          break;
+        case 'moderate':
+          waitUntil = 'networkidle0'; // Faster than networkidle2
+          break;
+        case 'basic':
+          waitUntil = 'load'; // Wait for load event
+          break;
+        case 'fast':
+        default:
+          waitUntil = 'domcontentloaded'; // Fastest - just wait for DOM
+          break;
+      }
+      
+      this.logger.log(`🚀 Starting scrape: ${request.url} (strategy: ${waitStrategy}, timeout: ${this.timeout}ms)`);
+      const navigationStart = Date.now();
+      
       const response = await page.goto(request.url, {
-        waitUntil: 'networkidle2',
+        waitUntil,
         timeout: this.timeout
       });
+      
+      const navigationTime = Date.now() - navigationStart;
+      this.logger.log(`📄 Navigation completed for ${request.url} in ${navigationTime}ms`);
 
       if (!response) {
         throw new Error('No response received');
@@ -98,11 +145,23 @@ export class ScraperService implements OnModuleInit, OnModuleDestroy {
         return this.createFailure(request, errorHandler.errorMessage, errorHandler.canRetry, httpStatus);
       }
 
+      // Additional wait for dynamic content if needed
+      const waitForDynamic = this.configService.get<number>('DYNAMIC_WAIT_MS', 0);
+      if (waitForDynamic > 0) {
+        this.logger.log(`⏳ Waiting ${waitForDynamic}ms for dynamic content...`);
+        await page.waitForTimeout(waitForDynamic);
+      }
+
+      const contentStart = Date.now();
       const content = await page.content();
+      const contentTime = Date.now() - contentStart;
+      
       const contentType = response.headers()['content-type'] || 'text/html';
       const contentLength = Buffer.byteLength(content, 'utf8');
       const contentHash = createHash('sha256').update(content).digest('hex');
-      const responseTime = Date.now() - startTime;
+      const totalResponseTime = Date.now() - startTime;
+
+      this.logger.log(`✅ Scraped ${request.url}: ${contentLength} bytes in ${totalResponseTime}ms (nav: ${navigationTime}ms, content: ${contentTime}ms)`);
 
       return {
         id: request.id,
@@ -112,7 +171,7 @@ export class ScraperService implements OnModuleInit, OnModuleDestroy {
         contentType,
         httpStatus,
         finalUrl,
-        responseTime,
+        responseTime: totalResponseTime,
         contentLength,
         contentHash,
         userAgent: userAgent,
@@ -124,7 +183,7 @@ export class ScraperService implements OnModuleInit, OnModuleDestroy {
       const responseTime = Date.now() - startTime;
       const errorHandler = HttpErrorHandler.handle(error);
       
-      this.logger.error(`Scraping failed for ${request.url}: ${errorHandler.errorMessage}`);
+      this.logger.error(`❌ Scraping failed for ${request.url} after ${responseTime}ms: ${errorHandler.errorMessage}`);
       
       return this.createFailure(
         request, 

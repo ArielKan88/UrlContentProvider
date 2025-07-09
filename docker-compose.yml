@@ -71,8 +71,12 @@ services:
       NODE_ENV: production
       RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
       CONCURRENT_SCRAPERS: 3
-      PUPPETEER_TIMEOUT: 60000
+      PUPPETEER_TIMEOUT: 15000    # Reduced from 60s to 15s for faster scraping
       MAX_RETRIES: 3
+      WAIT_STRATEGY: fast         # Options: fast, basic, moderate, comprehensive
+      DISABLE_IMAGES: true        # Disable images for faster loading
+      DISABLE_CSS: false          # Keep CSS enabled for layout
+      DYNAMIC_WAIT_MS: 0          # Additional wait for dynamic content (0 = disabled)
     depends_on:
       rabbitmq:
         condition: service_healthy
