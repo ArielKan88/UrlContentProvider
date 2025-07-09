@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: url-content-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: url_content_provider
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    command: ["mongod", "--quiet", "--logpath", "/dev/null"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: url-content-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: url-content-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      MONGODB_URL: mongodb://mongodb:27017/url_content_provider
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+      SCRAPE_INTERVAL_MINUTES: 60
+      MAX_RETRIES: 3
+    ports:
+      - "3000:3000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/content"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+      CONCURRENT_SCRAPERS: 3
+      PUPPETEER_TIMEOUT: 60000
+      MAX_RETRIES: 3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+    volumes:
+      - /dev/shm:/dev/shm
+
+volumes:
+  mongodb_data:
+  rabbitmq_data:
+
+networks:
+  default:
+    name: url-content-network

@@ -1,0 +1,12 @@
+{
+  "name": "url-content-provider",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:api": "cd api && npm run dev",
+    "dev:scraper": "cd scraper && npm run dev",
+    "build:api": "cd api && npm run build",
+    "build:scraper": "cd scraper && npm run build",
+    "install:all": "cd api && npm install && cd ../scraper && npm install"
+  }
+}
