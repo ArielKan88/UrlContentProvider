@@ -50,7 +50,7 @@ services:
       SCRAPE_INTERVAL_MINUTES: 60
       MAX_RETRIES: 3
     ports:
-      - "3000:3000"
+      - "8080:3000"
     depends_on:
       mongodb:
         condition: service_healthy
